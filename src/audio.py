@@ -48,3 +48,6 @@ def convert_to_wav(input_path, output_path):
         # Export as WAV
         audio.export(output_path, format="wav")
         return True
+    except Exception as e:
+        print(f"Error converting to WAV: {e}")
+        return False
