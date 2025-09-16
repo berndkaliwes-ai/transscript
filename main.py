@@ -1,13 +1,10 @@
 import os
-import sys
-# DON'T CHANGE THIS !!!
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from flask import Flask, render_template
 from flask_cors import CORS
-from src.models.user import db
-from src.routes.user import user_bp
-from src.routes.audio import audio_bp
+# Imports an die flache Projektstruktur angepasst.
+from user import db, user_bp
+from audio import audio_bp
 
 app = Flask(__name__, template_folder='templates')
 app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
