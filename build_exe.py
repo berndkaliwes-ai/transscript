@@ -17,6 +17,24 @@ Usage:
 import os
 import subprocess
 import sys
+import whisper
+
+def download_model_if_needed():
+    """Downloads the Whisper model to a local 'models' directory if not present."""
+    model_name = "base"
+    model_path = os.path.join("models", f"{model_name}.pt")
+    
+    if not os.path.exists(model_path):
+        print(f"Whisper-Modell '{model_name}' nicht gefunden. Lade es herunter...")
+        try:
+            os.makedirs("models", exist_ok=True)
+            whisper.load_model(model_name, download_root="models")
+            print("Modell erfolgreich heruntergeladen.")
+        except Exception as e:
+            print(f"Fehler beim Herunterladen des Modells: {e}")
+            sys.exit(1) # Exit if model download fails
+    else:
+        print(f"Whisper-Modell '{model_name}' bereits vorhanden.")
 
 def create_spec_file():
     """Create PyInstaller spec file for Windows build"""
@@ -28,7 +46,7 @@ a = Analysis(
     ['gui_app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('models', 'models')],
     hiddenimports=[
         'pydub',
         'librosa',
@@ -155,6 +173,9 @@ def main():
         return
     
     try:
+        # Download model before doing anything else
+        download_model_if_needed()
+
         # Install dependencies
         install_dependencies()
         
@@ -173,4 +194,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

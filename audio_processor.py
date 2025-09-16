@@ -1,233 +1,168 @@
 import os
-import tempfile
-import uuid
 from pydub import AudioSegment
+import sys
 import librosa
-import soundfile as sf
 import numpy as np
-import json
 import whisper
-import speech_recognition as sr
-import csv
-import io
 
-# Load Whisper model (using base model for balance of speed and accuracy)
+# Globales Whisper-Modell, um es nur einmal zu laden
 whisper_model = None
 
 def get_whisper_model():
+    """Lädt das Whisper-Modell einmal und gibt es zurück."""
     global whisper_model
     if whisper_model is None:
-        print("Loading Whisper model...")
-        whisper_model = whisper.load_model("base")
-        print("Whisper model loaded.")
+        # Bestimmt den Pfad für das Modell, abhängig davon, ob die App als .exe läuft
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # Die Anwendung wird als PyInstaller-Bundle ausgeführt.
+            # Das Modell liegt im temporären Ordner _MEIPASS in einem 'models'-Unterverzeichnis.
+            model_root = os.path.join(sys._MEIPASS, "models")
+        else:
+            # Die Anwendung wird als normales Python-Skript ausgeführt.
+            # Das Modell wird im 'models'-Unterverzeichnis des Skript-Verzeichnisses erwartet.
+            model_root = os.path.join(os.path.dirname(__file__), "models")
+
+        print(f"Lade Whisper-Modell (base) aus '{model_root}'... Dies kann einen Moment dauern.")
+        # 'base' ist ein guter Kompromiss zwischen Geschwindigkeit und Genauigkeit
+        whisper_model = whisper.load_model("base", download_root=model_root)
+        print("Whisper-Modell geladen.")
     return whisper_model
 
-# Allowed file extensions
-ALLOWED_EXTENSIONS = {"mp3", "wav", "opus", "ogg", "flac", "m4a", "aac", "wma"}
-
-def allowed_file(filename):
-    if not filename or "." not in filename:
-        return False
-    name_parts = filename.rsplit(".", 1)
-    if not name_parts[0]: # Check if there's a name before the dot
-        return False
-    return name_parts[1].lower() in ALLOWED_EXTENSIONS
-
 def convert_to_wav(input_path, output_path):
-    """Convert audio file to high-quality WAV format"""
+    """Konvertiert eine Audiodatei in ein hochwertiges WAV-Format (16kHz, 16-bit, mono)."""
     try:
         audio = AudioSegment.from_file(input_path)
-        audio = audio.set_frame_rate(44100).set_channels(1).set_sample_width(2)
+        # Whisper erwartet 16kHz Mono-Audio für optimale Ergebnisse
+        audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
         audio.export(output_path, format="wav")
         return True
     except Exception as e:
-        print(f"Error converting to WAV: {e}")
+        print(f"Fehler bei der Konvertierung zu WAV: {e}")
         return False
 
-def segment_audio_intelligent(audio_path, transcription_result, segmentation_type='sentence'):
-    """Segment audio based on transcription segments (sentences/paragraphs)"""
+def assess_audio_quality(wav_path):
+    """Bewertet die Qualität einer WAV-Audiodatei."""
     try:
-        audio = AudioSegment.from_wav(audio_path)
-        segments = []
+        y, sr = librosa.load(wav_path, sr=None)
+        duration = librosa.get_duration(y=y, sr=sr)
         
-        if segmentation_type == 'sentence':
-            for i, segment in enumerate(transcription_result.get('segments', [])):
-                start_ms = int(segment['start'] * 1000)
-                end_ms = int(segment['end'] * 1000)
-                
-                audio_segment = audio[start_ms:end_ms]
-                segments.append({
-                    'audio': audio_segment,
-                    'start_time': segment['start'],
-                    'end_time': segment['end'],
-                    'text': segment['text'].strip(),
-                    'type': 'sentence'
-                })
+        # Signal-Rausch-Verhältnis (einfache Annäherung)
+        rms_energy = np.sqrt(np.mean(y**2))
+        snr = 20 * np.log10(rms_energy / (np.finfo(float).eps)) if rms_energy > 0 else 0
         
-        elif segmentation_type == 'paragraph':
-            current_paragraph = []
-            current_start = None
-            
-            for i, segment in enumerate(transcription_result.get('segments', [])):
-                if current_start is None:
-                    current_start = segment['start']
-                
-                current_paragraph.append(segment)
-                
-                is_end_of_paragraph = False
-                if i < len(transcription_result['segments']) - 1:
-                    next_segment = transcription_result['segments'][i + 1]
-                    pause_duration = next_segment['start'] - segment['end']
-                    if pause_duration > 2.0:
-                        is_end_of_paragraph = True
-                else:
-                    is_end_of_paragraph = True
-                
-                if is_end_of_paragraph and current_paragraph:
-                    start_ms = int(current_start * 1000)
-                    end_ms = int(segment['end'] * 1000)
-                    
-                    audio_segment = audio[start_ms:end_ms]
-                    
-                    paragraph_text = ' '.join([s['text'].strip() for s in current_paragraph])
-                    
-                    segments.append({
-                        'audio': audio_segment,
-                        'start_time': current_start,
-                        'end_time': segment['end'],
-                        'text': paragraph_text,
-                        'type': 'paragraph'
-                    })
-                    
-                    current_paragraph = []
-                    current_start = None
+        # Klarheit (Spektraler Schwerpunkt)
+        spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
         
-        elif segmentation_type == 'time':
-            segment_length_ms = 30000
-            for i in range(0, len(audio), segment_length_ms):
-                segment = audio[i:i + segment_length_ms]
-                segments.append({
-                    'audio': segment,
-                    'start_time': i / 1000.0,
-                    'end_time': min((i + segment_length_ms) / 1000.0, len(audio) / 1000.0),
-                    'text': '',
-                    'type': 'time',
-                    'duration': (segment_length_ms / 1000.0)
-                })
-        
-        return segments
-    except Exception as e:
-        print(f"Error in intelligent segmentation: {e}")
-        return []
-
-def transcribe_audio(audio_path):
-    """Transcribe audio using Whisper"""
-    try:
-        model = get_whisper_model()
-        result = model.transcribe(audio_path)
-        
-        return {
-            'text': result['text'].strip(),
-            'language': result['language'],
-            'segments': [
-                {
-                    'start': seg['start'],
-                    'end': seg['end'],
-                    'text': seg['text'].strip()
-                }
-                for seg in result['segments']
-            ]
-        }
-    except Exception as e:
-        print(f"Error transcribing audio: {e}")
-        return {
-            'text': '',
-            'language': 'unknown',
-            'segments': [],
-            'error': str(e)
-        }
-
-def assess_audio_quality(audio_path):
-    """Assess audio quality for transcription and voice cloning"""
-    try:
-        y, sr = librosa.load(audio_path, sr=None)
-        
-        rms = librosa.feature.rms(y=y)[0]
-        rms_mean = np.mean(rms)
-        
-        zcr = librosa.feature.zero_crossing_rate(y)[0]
-        zcr_mean = np.mean(zcr)
-        
-        spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
-        spectral_centroid_mean = np.mean(spectral_centroid)
-        
-        duration = len(y) / sr
-        
-        sample_rate = sr
-        
-        quality_score = 0
+        # Probleme und Bewertung
         issues = []
-        
-        if sample_rate >= 44100:
-            quality_score += 25
-        elif sample_rate >= 22050:
-            quality_score += 15
-            issues.append("Sample rate could be higher for optimal voice cloning")
-        else:
-            quality_score += 5
-            issues.append("Low sample rate - not recommended for voice cloning")
-        
-        if rms_mean > 0.01:
-            quality_score += 25
-        elif rms_mean > 0.005:
-            quality_score += 15
-            issues.append("Signal level is low")
-        else:
-            quality_score += 5
-            issues.append("Very low signal level - may affect transcription quality")
-        
-        if zcr_mean < 0.1:
-            quality_score += 25
-        elif zcr_mean < 0.2:
-            quality_score += 15
-            issues.append("Moderate noise detected")
-        else:
-            quality_score += 5
-            issues.append("High noise level detected")
-        
-        if duration >= 60:
-            quality_score += 25
-        elif duration >= 30:
-            quality_score += 20
-        elif duration >= 10:
-            quality_score += 15
-        else:
-            quality_score += 5
-            issues.append("Short duration - may not be suitable for voice cloning")
-        
-        transcription_suitable = quality_score >= 50
-        voice_cloning_suitable = quality_score >= 70 and duration >= 30
-        
+        if sr < 16000:
+            issues.append(f"Niedrige Abtastrate ({sr}Hz). Erwartet >= 16kHz.")
+        if duration < 5:
+            issues.append(f"Kurze Dauer ({duration:.2f}s). Längeres Audio ist besser.")
+        if snr < 20:
+            issues.append(f"Geringe Signalstärke (SNR: {snr:.2f} dB).")
+
+        # Punktzahl-Berechnung
+        score = 100
+        score -= len(issues) * 15
+        score -= (44100 - min(sr, 44100)) / 44100 * 20 # Bestraft niedrigere Abtastraten
+        score -= (30 - min(duration, 30)) / 30 * 10    # Bestraft kürzere Dauer
+        score = max(0, score)
+
+        transcription_suitable = score >= 50
+        voice_cloning_suitable = score >= 70 and duration >= 30 and sr >= 44100
+
         return {
-            'quality_score': quality_score,
-            'transcription_suitable': transcription_suitable,
-            'voice_cloning_suitable': voice_cloning_suitable,
-            'issues': issues,
-            'metrics': {
-                'duration': duration,
-                'sample_rate': sample_rate,
-                'rms_energy': float(rms_mean),
-                'zero_crossing_rate': float(zcr_mean),
-                'spectral_centroid': float(spectral_centroid_mean)
+            "quality_score": round(score),
+            "transcription_suitable": transcription_suitable,
+            "voice_cloning_suitable": voice_cloning_suitable,
+            "issues": issues,
+            "metrics": {
+                "duration": round(duration, 2),
+                "sample_rate": sr,
+                "signal_to_noise_ratio": round(snr, 2),
+                "spectral_centroid": round(spectral_centroid, 2)
             }
         }
     except Exception as e:
-        print(f"Error assessing audio quality: {e}")
         return {
-            'quality_score': 0,
-            'transcription_suitable': False,
-            'voice_cloning_suitable': False,
-            'issues': [f"Error analyzing audio: {str(e)}"],
-            'metrics': {}
+            "quality_score": 0,
+            "transcription_suitable": False,
+            "voice_cloning_suitable": False,
+            "issues": [f"Qualitätsbewertung fehlgeschlagen: {e}"],
+            "metrics": {}
         }
 
+def transcribe_audio(wav_path):
+    """Transkribiert eine Audiodatei mit Whisper."""
+    try:
+        model = get_whisper_model()
+        # fp16=False ist für die CPU-Nutzung erforderlich/stabiler
+        result = model.transcribe(wav_path, fp16=False)
+        return {
+            "text": result["text"],
+            "language": result["language"],
+            "segments": result["segments"]
+        }
+    except Exception as e:
+        print(f"Transkription fehlgeschlagen: {e}")
+        return None
+
+def segment_audio_intelligent(wav_path, transcription_result, segmentation_type):
+    """Segmentiert Audio basierend auf der Transkription und dem Segmentierungstyp."""
+    if not transcription_result or "segments" not in transcription_result:
+        return []
+
+    whisper_segments = transcription_result["segments"]
+    final_segments = []
+
+    if segmentation_type == "sentence":
+        for seg in whisper_segments:
+            final_segments.append({
+                "start_time": seg["start"],
+                "end_time": seg["end"],
+                "text": seg["text"].strip(),
+                "type": "sentence"
+            })
+
+    elif segmentation_type == "paragraph":
+        current_paragraph = ""
+        para_start_time = whisper_segments[0]["start"] if whisper_segments else 0
+
+        for i, seg in enumerate(whisper_segments):
+            current_paragraph += seg["text"]
+            
+            is_last_segment = (i == len(whisper_segments) - 1)
+            pause_duration = 0
+            if not is_last_segment:
+                pause_duration = whisper_segments[i+1]["start"] - seg["end"]
+
+            if pause_duration > 2.0 or is_last_segment:
+                final_segments.append({
+                    "start_time": para_start_time,
+                    "end_time": seg["end"],
+                    "text": current_paragraph.strip(),
+                    "type": "paragraph"
+                })
+                current_paragraph = ""
+                if not is_last_segment:
+                    para_start_time = whisper_segments[i+1]["start"]
+
+    elif segmentation_type == "time":
+        audio = AudioSegment.from_wav(wav_path)
+        duration_ms = len(audio)
+        segment_length_ms = 30 * 1000
+        for i in range(0, duration_ms, segment_length_ms):
+            start_ms = i
+            end_ms = min(i + segment_length_ms, duration_ms)
+            
+            segment_text = "".join([s['text'] for s in whisper_segments if s['start'] < end_ms / 1000 and s['end'] > start_ms / 1000])
+
+            final_segments.append({
+                "start_time": start_ms / 1000.0,
+                "end_time": end_ms / 1000.0,
+                "text": segment_text.strip(),
+                "type": "time"
+            })
+
+    return final_segments
