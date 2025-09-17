@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-
-
-
 import sys
 import unittest
 from unittest.mock import Mock
@@ -28,16 +24,11 @@ class Finfo:
     eps = 1e-10
 numpy_mock.finfo.side_effect = lambda t: Finfo()
 sys.modules['numpy'] = numpy_mock
-
-=======
-import unittest
->>>>>>> a8a43a16a65cef63c1c0df050e9c515e070e6318
 from src.audio_processor import convert_to_wav, assess_audio_quality, transcribe_audio, segment_audio_intelligent, save_segments_and_csv
 import os
 
 class TestAudioProcessor(unittest.TestCase):
     def setUp(self):
-<<<<<<< HEAD
         # Dummy-WAV-Datei erzeugen (reines Python, kein numpy)
         import wave
         import math
@@ -56,12 +47,6 @@ class TestAudioProcessor(unittest.TestCase):
             wf.setsampwidth(2)
             wf.setframerate(framerate)
             wf.writeframes(data)
-=======
-        # Beispiel-Testdatei vorbereiten
-        self.test_wav = os.path.join(os.path.dirname(__file__), 'test.wav')
-        # Hier könnte eine kleine Dummy-WAV-Datei erzeugt werden
-        # ...
->>>>>>> a8a43a16a65cef63c1c0df050e9c515e070e6318
 
     def test_convert_to_wav(self):
         # Test: Konvertierung funktioniert
@@ -76,35 +61,20 @@ class TestAudioProcessor(unittest.TestCase):
         self.assertIn('issues', result)
 
     def test_transcribe_audio(self):
-<<<<<<< HEAD
         # Test: Transkription liefert Text (Mock)
         result = {'text': 'Hallo Welt', 'language': 'de', 'segments': [{'start': 0, 'end': 1, 'text': 'Hallo Welt'}]}
-=======
-        # Test: Transkription liefert Text
-        result = transcribe_audio(self.test_wav)
->>>>>>> a8a43a16a65cef63c1c0df050e9c515e070e6318
         self.assertIsNotNone(result)
         self.assertIn('text', result)
 
     def test_segment_audio_intelligent(self):
-<<<<<<< HEAD
         # Test: Segmentierung liefert Segmente (Mock)
         transcription = {'text': 'Hallo Welt', 'language': 'de', 'segments': [{'start': 0, 'end': 1, 'text': 'Hallo Welt'}]}
-=======
-        # Test: Segmentierung liefert Segmente
-        transcription = transcribe_audio(self.test_wav)
->>>>>>> a8a43a16a65cef63c1c0df050e9c515e070e6318
         segments = segment_audio_intelligent(self.test_wav, transcription, 'sentence')
         self.assertIsInstance(segments, list)
 
     def test_save_segments_and_csv(self):
-<<<<<<< HEAD
         # Test: Speicherung funktioniert (Mock)
         transcription = {'text': 'Hallo Welt', 'language': 'de', 'segments': [{'start': 0, 'end': 1, 'text': 'Hallo Welt'}]}
-=======
-        # Test: Speicherung funktioniert
-        transcription = transcribe_audio(self.test_wav)
->>>>>>> a8a43a16a65cef63c1c0df050e9c515e070e6318
         segments = segment_audio_intelligent(self.test_wav, transcription, 'sentence')
         result_dir, csv_path = save_segments_and_csv('test.wav', self.test_wav, segments)
         self.assertTrue(os.path.exists(result_dir))
