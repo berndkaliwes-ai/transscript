@@ -1,3 +1,54 @@
+import csv
+
+def save_segments_and_csv(original_filename, wav_path, segments, error_list=None, output_root=None):
+    """Speichert Audiosegmente als WAV und erzeugt eine CSV mit allen Informationen."""
+    import os
+    from pydub import AudioSegment
+    if error_list is None:
+        error_list = []
+    if output_root is None:
+        output_root = os.path.dirname(wav_path)
+
+    # Ergebnisordner anlegen
+    base_name = os.path.splitext(os.path.basename(original_filename))[0]
+    result_dir = os.path.join(output_root, base_name)
+    os.makedirs(result_dir, exist_ok=True)
+
+    # Original-Audio laden
+    audio = AudioSegment.from_wav(wav_path)
+
+    # CSV vorbereiten
+    csv_path = os.path.join(result_dir, f"{base_name}_segments.csv")
+    csv_header = ["original_filename","segment_number","audio_file","transcript","start_time","end_time","duration","error"]
+    rows = []
+
+    for i, seg in enumerate(segments, 1):
+        start_ms = int(seg["start_time"] * 1000)
+        end_ms = int(seg["end_time"] * 1000)
+        segment_audio = audio[start_ms:end_ms]
+        segment_filename = f"segment_{i:02d}.wav"
+        segment_path = os.path.join(result_dir, segment_filename)
+        segment_audio.export(segment_path, format="wav")
+
+        error = "; ".join(error_list) if error_list else ""
+        rows.append([
+            base_name,
+            i,
+            segment_filename,
+            seg["text"],
+            seg["start_time"],
+            seg["end_time"],
+            seg["end_time"]-seg["start_time"],
+            error
+        ])
+
+    # Schreibe CSV
+    with open(csv_path, "w", newline='', encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(csv_header)
+        writer.writerows(rows)
+
+    return result_dir, csv_path
 import os
 from pydub import AudioSegment
 import sys
@@ -31,7 +82,14 @@ def get_whisper_model():
 def convert_to_wav(input_path, output_path):
     """Konvertiert eine Audiodatei in ein hochwertiges WAV-Format (16kHz, 16-bit, mono)."""
     try:
-        audio = AudioSegment.from_file(input_path)
+        # Unterstützte Formate
+        supported_formats = ["opus", "mp3", "wav", "m4a", "aac", "flac"]
+        ext = os.path.splitext(input_path)[1][1:].lower()
+        if ext not in supported_formats:
+            print(f"Nicht unterstütztes Format: {ext}")
+            return False
+
+        audio = AudioSegment.from_file(input_path, format=ext if ext != "wav" else None)
         # Whisper erwartet 16kHz Mono-Audio für optimale Ergebnisse
         audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
         audio.export(output_path, format="wav")
@@ -45,20 +103,35 @@ def assess_audio_quality(wav_path):
     try:
         y, sr = librosa.load(wav_path, sr=None)
         duration = librosa.get_duration(y=y, sr=sr)
-        
-        # Signal-Rausch-Verhältnis (einfache Annäherung)
-        rms_energy = np.sqrt(np.mean(y**2))
-        snr = 20 * np.log10(rms_energy / (np.finfo(float).eps)) if rms_energy > 0 else 0
-        
+
+        # Signal-Rausch-Verhältnis (SNR, grobe Schätzung)
+        rms_signal = np.sqrt(np.mean(y**2))
+        noise = y - librosa.effects.deemphasize(y)
+        rms_noise = np.sqrt(np.mean(noise**2)) if np.any(noise) else 1e-10
+        snr = 20 * np.log10(rms_signal / rms_noise) if rms_noise > 0 else 0
+
         # Klarheit (Spektraler Schwerpunkt)
         spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
-        
-        # Probleme und Bewertung
+
+        # Schwellenwerte und Fehlerdokumentation
         issues = []
         if sr < 16000:
             issues.append(f"Niedrige Abtastrate ({sr}Hz). Erwartet >= 16kHz.")
         if duration < 5:
             issues.append(f"Kurze Dauer ({duration:.2f}s). Längeres Audio ist besser.")
+        if snr < 20:
+            issues.append(f"SNR zu niedrig ({snr:.2f}dB). Mindestwert für Transkription: 20dB.")
+        elif snr < 30:
+            issues.append(f"SNR unter 30dB. Für Voice Cloning empfohlen: >= 30dB.")
+
+        # Rückgabe: SNR, Dauer, Abtastrate, Klarheit, Fehlerliste
+        return {
+            "snr": snr,
+            "duration": duration,
+            "sample_rate": sr,
+            "spectral_centroid": spectral_centroid,
+            "issues": issues
+        }
         if snr < 20:
             issues.append(f"Geringe Signalstärke (SNR: {snr:.2f} dB).")
 

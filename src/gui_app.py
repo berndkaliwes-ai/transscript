@@ -84,7 +84,40 @@ class WhatsAppVoiceProcessorGUI:
 
         self.process_button.config(state=tk.DISABLED)
         self.results_text.config(state=tk.NORMAL)
+        # ZIP-Download Button
+        self.zip_button = ttk.Button(main_frame, text="Ergebnisse als ZIP herunterladen", command=self.zip_results, state=tk.NORMAL)
+        self.zip_button.pack(pady=5)
         self.results_text.delete(1.0, tk.END)
+    def zip_results(self):
+        import zipfile
+        from tkinter import filedialog, messagebox
+        result_dirs = []
+        for file_path in self.files:
+            base_name = os.path.splitext(os.path.basename(file_path))[0]
+            result_dir = os.path.join(os.path.dirname(file_path), base_name)
+            if os.path.exists(result_dir):
+                result_dirs.append(result_dir)
+
+        if not result_dirs:
+            messagebox.showinfo("Keine Ergebnisse", "Es wurden keine Ergebnisordner gefunden.")
+            return
+
+        zip_path = filedialog.asksaveasfilename(
+            defaultextension=".zip",
+            filetypes=[("ZIP files", "*.zip")],
+            title="Speicherort für ZIP wählen"
+        )
+        if not zip_path:
+            return
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for result_dir in result_dirs:
+                for root, _, files in os.walk(result_dir):
+                    for file in files:
+                        abs_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(abs_path, os.path.dirname(zip_path))
+                        zipf.write(abs_path, rel_path)
+        messagebox.showinfo("ZIP erstellt", f"ZIP-Datei gespeichert: {zip_path}")
         self.results_text.insert(tk.END, "Verarbeitung gestartet...\n")
         self.results_text.config(state=tk.DISABLED)
         self.progress_bar["value"] = 0
@@ -109,6 +142,17 @@ class WhatsAppVoiceProcessorGUI:
                 transcription_result = transcribe_audio(wav_output_path)
                 segments = segment_audio_intelligent(wav_output_path, transcription_result, self.segmentation_type.get())
 
+
+                # Ergebnisse speichern
+                from audio_processor import save_segments_and_csv
+                error_list = quality_assessment.get("issues", [])
+                result_dir, csv_path = save_segments_and_csv(
+                    original_filename=file_path,
+                    wav_path=wav_output_path,
+                    segments=segments,
+                    error_list=error_list
+                )
+
                 result = {
                     "original_filename": os.path.basename(file_path),
                     "status": "success",
@@ -119,7 +163,9 @@ class WhatsAppVoiceProcessorGUI:
                         "end_time": s["end_time"],
                         "text": s["text"],
                         "type": s["type"]
-                    } for s in segments]
+                    } for s in segments],
+                    "result_dir": result_dir,
+                    "csv_path": csv_path
                 }
                 all_results.append(result)
 
