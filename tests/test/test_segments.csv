@@ -1,0 +1,2 @@
+original_filename,segment_number,audio_file,transcript,start_time,end_time,duration,error
+test,1,segment_01.wav,Hallo Welt,0,1,1,

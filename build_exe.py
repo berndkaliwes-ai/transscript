@@ -43,7 +43,7 @@ def create_spec_file():
 block_cipher = None
 
 a = Analysis(
-    ['gui_app.py'],
+    ['src/gui_app.py'],
     pathex=[],
     binaries=[],
     datas=[('models', 'models')],
@@ -165,7 +165,7 @@ def main():
         print("Warning: This script is designed for Windows. You may encounter issues on other platforms.")
     
     # Check required files
-    required_files = ['gui_app.py', 'audio_processor.py']
+    required_files = ['src/gui_app.py', 'src/audio_processor.py']
     missing_files = [f for f in required_files if not os.path.exists(f)]
     
     if missing_files:
