@@ -105,10 +105,14 @@ def assess_audio_quality(wav_path):
         duration = librosa.get_duration(y=y, sr=sr)
 
         # Signal-Rausch-Verhältnis (SNR, grobe Schätzung)
-        rms_signal = np.sqrt(np.mean(y**2))
-        noise = y - librosa.effects.deemphasize(y)
-        rms_noise = np.sqrt(np.mean(noise**2)) if np.any(noise) else 1e-10
-        snr = 20 * np.log10(rms_signal / rms_noise) if rms_noise > 0 else 0
+        # librosa.effects.deemphasize existiert nicht in librosa.
+        # Die SNR-Berechnung wird vorerst deaktiviert, um Fehler zu vermeiden.
+        # Eine korrekte Rauschschätzung müsste hier implementiert werden.
+        # rms_signal = np.sqrt(np.mean(y**2))
+        # noise = y - librosa.effects.deemphasize(y) # Diese Zeile verursacht einen Fehler
+        # rms_noise = np.sqrt(np.mean(noise**2)) if np.any(noise) else 1e-10
+        # snr = 20 * np.log10(rms_signal / rms_noise) if rms_noise > 0 else 0
+        snr = 0 # Standardwert, da SNR-Berechnung deaktiviert ist
 
         # Klarheit (Spektraler Schwerpunkt)
         spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
